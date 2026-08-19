@@ -22,6 +22,7 @@ SQL_FILES = [
     "sql/marts/dim_carrier.sql",
     "sql/marts/fact_sales.sql",
     "sql/marts/fact_cold_chain_reading.sql",
+    "sql/marts/fact_wms_scan_event.sql",
 ]
 
 
@@ -34,7 +35,7 @@ def main() -> None:
 
     for table in [
         "marts.dim_date", "marts.dim_warehouse", "marts.dim_carrier",
-        "marts.fact_sales", "marts.fact_cold_chain_reading",
+        "marts.fact_sales", "marts.fact_cold_chain_reading", "marts.fact_wms_scan_event",
     ]:
         n = con.sql(f"SELECT count(*) FROM {table}").fetchone()[0]
         print(f"{table}: {n:,} rows")
@@ -159,6 +160,38 @@ def main() -> None:
     """).df()
     print("\nBy vendor -- this is where Divya's 'impossible 1/3' number likely came from:")
     print(by_vendor.to_string(index=False))
+
+    wms_orphans = con.sql("""
+        SELECT count(*) FILTER (WHERE warehouse_name IS NULL) AS warehouse_join_misses,
+               count(*) AS total_scans
+        FROM marts.fact_wms_scan_event
+    """).df()
+    print("\nfact_wms_scan_event warehouse join check:")
+    print(wms_orphans.to_string(index=False))
+
+    linkage_check = con.sql("""
+        SELECT
+            count(*) AS dispatch_events,
+            count(*) FILTER (
+                WHERE EXISTS (
+                    SELECT 1 FROM marts.fact_wms_scan_event r
+                    WHERE r.event_type = 'RECEIVE'
+                      AND r.warehouse_code = d.warehouse_code
+                      AND r.pallet_id = d.pallet_id
+                      AND r.event_ts_ist < d.event_ts_ist
+                )
+            ) AS dispatch_with_a_prior_same_pallet_receive
+        FROM marts.fact_wms_scan_event d
+        WHERE d.event_type = 'DISPATCH'
+    """).df()
+    print("\nDISPATCH-to-RECEIVE pallet_id 'linkage' check (expect ~coincidence rate, not a real link):")
+    print(linkage_check.to_string(index=False))
+    print(
+        "Back-of-envelope expected coincidence rate, given pallet_id has "
+        "400,000 possible values and roughly ~31k RECEIVE scans per "
+        "warehouse: ~7-8%. A rate in that range confirms these are random "
+        "matches, not a genuine stitching key."
+    )
 
 
 if __name__ == "__main__":
