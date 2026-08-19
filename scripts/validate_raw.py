@@ -63,11 +63,11 @@ def main() -> None:
     for feed, glob in feed_globs.items():
         expected = int(manifest.loc[manifest.feed == feed, "expected_rows"].iloc[0])
         try:
-            actual = con.sql(
-                f"SELECT count(*) FROM read_parquet('{glob}', union_by_name=true)"
-            ).fetchone()[0]
+            with duckdb.connect() as probe:
+                actual = probe.sql(
+                    f"SELECT count(*) FROM read_parquet('{glob}', union_by_name=true)"
+                ).fetchone()[0]
         except Exception as e:
-            con.rollback()
             print(f"[FAIL] {feed}: could not read all partitions -> {e}")
             continue
         diff = actual - expected
