@@ -24,6 +24,21 @@
 -- doesn't matter as long as it's the same on both sides. business_date
 -- still correctly uses the IST-shifted value -- that fix was never wrong,
 -- it just wasn't the right timestamp to reuse for this join.
+
+-- A small fraction of sales still won't find a matching outlet/product
+-- version even with that fix -- verified this is NOT a bug. outlet_code/
+-- sku_code updates and deletes are assigned independent random days in the
+-- generator, so a key can be deleted and later "resurrected" by an update
+-- purely by chance (insert -> update -> DELETE on day 300 -> update on day
+-- 400). The gap between the delete and the later update is a period where
+-- the entity genuinely had no active master record; a sale falling in that
+-- window correctly finds nothing. Confirmed via pipeline/run_marts.py:
+-- every miss decomposes exactly into deleted-and-never-reinstated (~6.5k
+-- outlet-lines, ~7.9k product-lines) or exactly this kind of gap (~12.6k /
+-- ~5.6k), with zero left unexplained. Not "fixed" here on purpose --
+-- doing so would mean inventing outlet/product attributes for a period the
+-- source system itself says didn't have any.
+
 --
 -- Both channel_pos (from the till, as captured at point of sale) and
 -- channel_master (from the outlet master, at that same point in time) are

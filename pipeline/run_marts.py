@@ -52,6 +52,68 @@ def main() -> None:
     print("\nfact_sales referential integrity check (point-in-time joins):")
     print(orphans.to_string(index=False))
 
+    outlet_breakdown = con.sql("""
+        WITH misses AS (
+            SELECT p.outlet_code, p.event_ts_utc
+            FROM staging.pos_transactions p
+            LEFT JOIN clean.dim_outlet o
+                ON p.outlet_code = o.outlet_code
+               AND p.event_ts_utc >= o.valid_from
+               AND p.event_ts_utc <  COALESCE(o.valid_to, TIMESTAMP '9999-12-31')
+            WHERE o.outlet_code IS NULL
+        ),
+        bounds AS (
+            SELECT outlet_code,
+                   min(valid_from) AS first_seen,
+                   max(COALESCE(valid_to, TIMESTAMP '9999-12-31')) AS last_seen
+            FROM clean.dim_outlet
+            GROUP BY outlet_code
+        )
+        SELECT
+            count(*) AS total_misses,
+            count(*) FILTER (WHERE b.outlet_code IS NULL) AS outlet_never_in_dim,
+            count(*) FILTER (WHERE b.outlet_code IS NOT NULL AND m.event_ts_utc >= b.last_seen) AS sale_after_last_known_version,
+            count(*) FILTER (WHERE b.outlet_code IS NOT NULL AND m.event_ts_utc < b.first_seen) AS sale_before_first_version,
+            count(*) FILTER (WHERE b.outlet_code IS NOT NULL
+                              AND m.event_ts_utc >= b.first_seen
+                              AND m.event_ts_utc <  b.last_seen) AS sale_in_gap_between_versions
+        FROM misses m
+        LEFT JOIN bounds b ON m.outlet_code = b.outlet_code
+    """).df()
+    print("\noutlet_join_misses breakdown (why each one is unmatched):")
+    print(outlet_breakdown.to_string(index=False))
+
+    product_breakdown = con.sql("""
+        WITH misses AS (
+            SELECT p.sku_code, p.event_ts_utc
+            FROM staging.pos_transactions p
+            LEFT JOIN clean.dim_product pr
+                ON p.sku_code = pr.sku_code
+               AND p.event_ts_utc >= pr.valid_from
+               AND p.event_ts_utc <  COALESCE(pr.valid_to, TIMESTAMP '9999-12-31')
+            WHERE pr.sku_code IS NULL
+        ),
+        bounds AS (
+            SELECT sku_code,
+                   min(valid_from) AS first_seen,
+                   max(COALESCE(valid_to, TIMESTAMP '9999-12-31')) AS last_seen
+            FROM clean.dim_product
+            GROUP BY sku_code
+        )
+        SELECT
+            count(*) AS total_misses,
+            count(*) FILTER (WHERE b.sku_code IS NULL) AS sku_never_in_dim,
+            count(*) FILTER (WHERE b.sku_code IS NOT NULL AND m.event_ts_utc >= b.last_seen) AS sale_after_last_known_version,
+            count(*) FILTER (WHERE b.sku_code IS NOT NULL AND m.event_ts_utc < b.first_seen) AS sale_before_first_version,
+            count(*) FILTER (WHERE b.sku_code IS NOT NULL
+                              AND m.event_ts_utc >= b.first_seen
+                              AND m.event_ts_utc <  b.last_seen) AS sale_in_gap_between_versions
+        FROM misses m
+        LEFT JOIN bounds b ON m.sku_code = b.sku_code
+    """).df()
+    print("\nproduct_join_misses breakdown (why each one is unmatched):")
+    print(product_breakdown.to_string(index=False))
+
     mismatch = con.sql("""
         SELECT count(*) AS disagreements
         FROM read_csv_auto('data/reference/uom_conversion.csv') u
