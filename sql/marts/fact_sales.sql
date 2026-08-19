@@ -6,11 +6,24 @@
 -- number derived from it (the CFO's traceability requirement).
 --
 -- Outlet and product context are joined POINT-IN-TIME against the SCD2
--- dimensions (event_ts_ist falls inside [valid_from, valid_to)), not
--- against is_current. Joining to "current" would reproduce exactly the bug
+-- dimensions (event_ts falls inside [valid_from, valid_to)), not against
+-- is_current. Joining to "current" would reproduce exactly the bug
 -- KP-3155 complained about: old sales silently reattributed to today's
 -- channel/category if it changed since. This is the whole reason
 -- dim_outlet/dim_product were built as history tables in the first place.
+--
+-- The join uses event_ts_utc, NOT event_ts_ist, deliberately. First pass
+-- used event_ts_ist here and it was wrong: dim_outlet/dim_product's
+-- valid_from/valid_to come straight from erp_cdc's __op_ts with no offset
+-- applied (there's no documented reason CDC timestamps need an IST
+-- correction the way POS's did), so comparing an IST-shifted sale time
+-- against un-shifted CDC boundaries silently misaligned every version
+-- transition by ~5.5 hours. The run_marts.py integrity check caught this
+-- as ~19k/~14k non-null misses out of 4M rows -- both sides of a
+-- point-in-time comparison just need to share ONE clock; which clock
+-- doesn't matter as long as it's the same on both sides. business_date
+-- still correctly uses the IST-shifted value -- that fix was never wrong,
+-- it just wasn't the right timestamp to reuse for this join.
 --
 -- Both channel_pos (from the till, as captured at point of sale) and
 -- channel_master (from the outlet master, at that same point in time) are
@@ -69,9 +82,9 @@ SELECT
 FROM staging.pos_transactions p
 LEFT JOIN clean.dim_outlet o
     ON p.outlet_code = o.outlet_code
-   AND p.event_ts_ist >= o.valid_from
-   AND p.event_ts_ist <  COALESCE(o.valid_to, TIMESTAMP '9999-12-31')
+   AND p.event_ts_utc >= o.valid_from
+   AND p.event_ts_utc <  COALESCE(o.valid_to, TIMESTAMP '9999-12-31')
 LEFT JOIN clean.dim_product pr
     ON p.sku_code = pr.sku_code
-   AND p.event_ts_ist >= pr.valid_from
-   AND p.event_ts_ist <  COALESCE(pr.valid_to, TIMESTAMP '9999-12-31');
+   AND p.event_ts_utc >= pr.valid_from
+   AND p.event_ts_utc <  COALESCE(pr.valid_to, TIMESTAMP '9999-12-31');
