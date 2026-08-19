@@ -1,0 +1,22 @@
+# Dataset — regenerate via generate_dataset.py, never commit
+data/
+data_10x/
+data_*/
+
+# Local engine / warehouse files
+*.duckdb
+*.duckdb.wal
+*.db
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
