@@ -21,6 +21,7 @@ SQL_FILES = [
     "sql/marts/dim_warehouse.sql",
     "sql/marts/dim_carrier.sql",
     "sql/marts/fact_sales.sql",
+    "sql/marts/fact_cold_chain_reading.sql",
 ]
 
 
@@ -31,7 +32,10 @@ def main() -> None:
         print(f"running {path} ...")
         con.execute(Path(path).read_text(encoding="utf-8"))
 
-    for table in ["marts.dim_date", "marts.dim_warehouse", "marts.dim_carrier", "marts.fact_sales"]:
+    for table in [
+        "marts.dim_date", "marts.dim_warehouse", "marts.dim_carrier",
+        "marts.fact_sales", "marts.fact_cold_chain_reading",
+    ]:
         n = con.sql(f"SELECT count(*) FROM {table}").fetchone()[0]
         print(f"{table}: {n:,} rows")
 
@@ -123,6 +127,38 @@ def main() -> None:
     print(f"\nuom_conversion.csv vs dim_product.case_pack disagreements: {mismatch:,} "
           f"(0 confirms it's safe to source eaches-per-case from dim_product, "
           f"which has no L16 gaps)")
+
+    wh_orphans = con.sql("""
+        SELECT count(*) FILTER (WHERE warehouse_name IS NULL) AS warehouse_join_misses,
+               count(*) AS total_readings
+        FROM marts.fact_cold_chain_reading
+    """).df()
+    print("\nfact_cold_chain_reading warehouse join check:")
+    print(wh_orphans.to_string(index=False))
+
+    excursion_compare = con.sql("""
+        SELECT
+            round(100.0 * count(*) FILTER (WHERE temp_value > 8 AND temp_value IS NOT NULL)
+                  / count(*) FILTER (WHERE temp_value IS NOT NULL), 2) AS naive_pct_using_raw_temp_value,
+            round(100.0 * count(*) FILTER (WHERE above_band)
+                  / count(*) FILTER (WHERE temp_c IS NOT NULL), 2) AS normalized_pct_using_temp_c
+        FROM marts.fact_cold_chain_reading
+    """).df()
+    print("\nExcursion rate: naive (raw temp_value, no unit fix) vs normalized (temp_c):")
+    print(excursion_compare.to_string(index=False))
+
+    by_vendor = con.sql("""
+        SELECT telemetry_vendor,
+               count(*) AS readings,
+               round(100.0 * count(*) FILTER (WHERE temp_value > 8) / count(*), 1) AS naive_pct,
+               round(100.0 * count(*) FILTER (WHERE above_band) / count(*), 1) AS normalized_pct
+        FROM marts.fact_cold_chain_reading
+        WHERE temp_c IS NOT NULL
+        GROUP BY telemetry_vendor
+        ORDER BY telemetry_vendor
+    """).df()
+    print("\nBy vendor -- this is where Divya's 'impossible 1/3' number likely came from:")
+    print(by_vendor.to_string(index=False))
 
 
 if __name__ == "__main__":
