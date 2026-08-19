@@ -17,7 +17,18 @@ import duckdb
 DB_PATH = "warehouse.duckdb"
 SQL_FILES = [
     "sql/clean/dim_outlet.sql",
+    "sql/clean/dim_product.sql",
 ]
+
+
+def summarize(con, table, key_col, raw_glob):
+    n_versions = con.sql(f"SELECT count(*) FROM {table}").fetchone()[0]
+    n_current = con.sql(f"SELECT count(*) FROM {table} WHERE is_current").fetchone()[0]
+    n_raw = con.sql(f"""
+        SELECT count(DISTINCT {key_col}) FROM read_parquet('{raw_glob}')
+    """).fetchone()[0]
+    print(f"{table}: {n_versions:,} historical versions, {n_current:,} currently active "
+          f"(raw CDC stream covers {n_raw:,} distinct {key_col} values)")
 
 
 def main() -> None:
@@ -27,16 +38,8 @@ def main() -> None:
         print(f"running {path} ...")
         con.execute(Path(path).read_text(encoding="utf-8"))
 
-    n_versions = con.sql("SELECT count(*) FROM clean.dim_outlet").fetchone()[0]
-    n_current = con.sql("SELECT count(*) FROM clean.dim_outlet WHERE is_current").fetchone()[0]
-    n_outlets_raw = con.sql("""
-        SELECT count(DISTINCT outlet_code)
-        FROM read_parquet('data/raw/erp_cdc/outlet_master/*/*.parquet')
-    """).fetchone()[0]
-
-    print(f"clean.dim_outlet: {n_versions:,} historical versions, "
-          f"{n_current:,} currently active outlets "
-          f"(raw CDC stream covers {n_outlets_raw:,} distinct outlet_code values)")
+    summarize(con, "clean.dim_outlet", "outlet_code", "data/raw/erp_cdc/outlet_master/*/*.parquet")
+    summarize(con, "clean.dim_product", "sku_code", "data/raw/erp_cdc/product_master/*/*.parquet")
 
     tie_sample = con.sql("""
         SELECT outlet_code, credit_limit, valid_from, valid_to, is_current
