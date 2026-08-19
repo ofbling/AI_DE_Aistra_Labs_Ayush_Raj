@@ -53,7 +53,7 @@ def main() -> None:
         "wms_scan_events": f"{RAW.as_posix()}/wms_scan_events/*/*.parquet",
     }
 
-    print("\n=== 1. Row counts vs manifest ===")
+    print("\n# 1. Row counts vs manifest")
     manifest = con.sql(f"""
         SELECT feed, SUM(row_count) AS expected_rows
         FROM read_csv_auto('{DATA_DIR.as_posix()}/_manifest/expected_partitions.csv')
@@ -83,7 +83,7 @@ def main() -> None:
         "alone would have hidden it completely."
     )
 
-    print("\n=== 2. pos_transactions schema drift (DEFECT L4) ===")
+    print("\n#2. pos_transactions schema drift (DEFECT L4)")
     drift = con.sql(f"""
         SELECT ingest_date < '2025-10-01' AS pre_drift, count(*) AS rows
         FROM read_parquet('{feed_globs["pos_transactions"]}',
@@ -92,7 +92,7 @@ def main() -> None:
     """).df()
     print(drift.to_string(index=False))
 
-    print("\n=== 3. Exact duplicate rows in pos_transactions (DEFECT L3) ===")
+    print("\n#3. Exact duplicate rows in pos_transactions (DEFECT L3)")
     dupe = con.sql(f"""
         SELECT count(*) AS total_rows,
                count(*) FILTER (WHERE rn > 1) AS duplicate_rows
@@ -111,7 +111,7 @@ def main() -> None:
     # level, so the bad file has to be excluded from the scan itself.
     clean_files = parquet_list_literal(reefer_files(exclude=BAD_REEFER_FILE))
 
-    print("\n=== 4. Gateway GW-017 outage (DEFECT L10) ===")
+    print("\n#4. Gateway GW-017 outage (DEFECT L10)")
     outage = con.sql(f"""
         SELECT dt, count(*) AS readings
         FROM read_parquet({clean_files}, hive_partitioning=true)
@@ -120,7 +120,7 @@ def main() -> None:
     """).df()
     print(outage.to_string(index=False))
 
-    print("\n=== 5. temp_unit nulls by vendor (DEFECT L7) ===")
+    print("\n#5. temp_unit nulls by vendor (DEFECT L7)")
     nulls = con.sql(f"""
         SELECT telemetry_vendor, count(*) AS readings,
                count(*) FILTER (WHERE temp_unit IS NULL) AS null_unit,
