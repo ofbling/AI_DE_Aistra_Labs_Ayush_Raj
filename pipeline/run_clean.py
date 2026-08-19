@@ -18,6 +18,7 @@ DB_PATH = "warehouse.duckdb"
 SQL_FILES = [
     "sql/clean/dim_outlet.sql",
     "sql/clean/dim_product.sql",
+    "sql/clean/orders_current.sql",
 ]
 
 
@@ -53,6 +54,26 @@ def main() -> None:
     """).df()
     print("\nSample multi-version outlets (spot-check L12/L13 by eye):")
     print(tie_sample.to_string(index=False))
+
+    n_orders = con.sql("SELECT count(*) FROM clean.orders_current").fetchone()[0]
+    n_orders_raw = con.sql("""
+        SELECT count(DISTINCT order_number)
+        FROM read_parquet('data/raw/erp_cdc/sales_order_header/*/*.parquet')
+    """).fetchone()[0]
+    print(f"\nclean.orders_current: {n_orders:,} active orders "
+          f"({n_orders_raw - n_orders:,} order_numbers excluded as tombstoned, "
+          f"out of {n_orders_raw:,} distinct order_numbers seen in raw CDC)")
+
+    by_source = con.sql("""
+        SELECT source_system,
+               count(*) AS orders,
+               round(avg(order_value_gross), 0) AS avg_order_value_gross
+        FROM clean.orders_current
+        GROUP BY source_system
+        ORDER BY source_system
+    """).df()
+    print("\nAverage order value by source system (Q7 -- are these comparable?):")
+    print(by_source.to_string(index=False))
 
 
 if __name__ == "__main__":
