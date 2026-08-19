@@ -24,6 +24,7 @@ BAD_REEFER_FILE = RAW / "reefer_telemetry" / "dt=2025-07-14" / "part-00000.parqu
 SQL_FILES = [
     "sql/staging/stg_pos_transactions.sql",
     "sql/staging/stg_reefer_telemetry.sql",
+    "sql/staging/stg_wms_scan_events.sql",
 ]
 
 
@@ -56,6 +57,13 @@ def main() -> None:
     n_tel = con.sql("SELECT count(*) FROM staging.reefer_telemetry").fetchone()[0]
     print(f"staging.reefer_telemetry:  {n_tel:,} rows "
           f"(excludes 1 truncated file -- DEFECT L18)")
+
+    n_wms = con.sql("SELECT count(*) FROM staging.wms_scan_events").fetchone()[0]
+    raw_wms = con.sql("""
+        SELECT count(*) FROM read_parquet('data/raw/wms_scan_events/*/*.parquet')
+    """).fetchone()[0]
+    print(f"staging.wms_scan_events:   {n_wms:,} rows "
+          f"(raw had {raw_wms:,} -- should match exactly, no dedup applied)")
 
 
 if __name__ == "__main__":
