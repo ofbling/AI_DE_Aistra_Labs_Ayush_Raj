@@ -154,6 +154,58 @@ analysis produced that number, not a cold chain operations problem.
 
 ---
 
-*More entries land here as the remaining fact tables (WMS cycle time) get
-confirmed, plus service level, channel reclassification, order value
-comparability, and feed completeness.*
+## Warehouse Cycle Time (Dock-to-Dispatch)
+
+**Definition -- as asked for.** Illustrative question 5 and Divya's brief
+both ask for median dock-to-dispatch cycle time by warehouse: how long,
+per job, from a RECEIVE scan to the DISPATCH scan for the same goods.
+
+**This cannot be computed from the data as shipped.** Checked directly: no
+field in wms_scan_events links a RECEIVE scan to the DISPATCH scan for the
+same physical item. `warehouse_code`, `order_number`, `sku_code`,
+`batch_id`, and `pallet_id` are all assigned independently at random per
+scan in the generator -- there is no shared "job" identifier anywhere in
+this feed. Confirmed empirically too, not just by reading source: matching
+a DISPATCH event to a same-pallet RECEIVE at the same warehouse succeeds
+at ~3.76% of the time, almost exactly what pure random chance predicts
+(~3.8%, worked out from `pallet_id`'s 400,000 possible values) -- nowhere
+near the near-100% match rate a real link would produce. This is a genuine
+data gap, distinct from DEFECT L11 (missing scans) -- even with zero
+missing scans, there would still be no key to stitch on.
+
+**What's offered instead: a coarse, warehouse-level PROXY, not a true
+cycle time.** For each warehouse and day, the gap between the typical
+(median) time-of-day a RECEIVE happens and the typical time-of-day a
+DISPATCH happens, averaged across days. This tracks no single item's
+journey -- it is only a rough sense of how spread out handling activity
+is across a warehouse's day.
+
+**Grain.** Warehouse (averaged across days in the requested range).
+
+**Filters / exclusions.** Days where a warehouse has zero RECEIVE or zero
+DISPATCH events are excluded from the average (can happen from DEFECT L11,
+missing scans, on top of the fact that this measure was never going to be
+precise regardless).
+
+**Source.** `marts.fact_wms_scan_event`.
+
+**Owner.** Supply Chain Operations (Divya Raghavan's team).
+
+**Known limitations.**
+- Not a per-job metric. Treat any number this query returns as a coarse
+  operational signal, never as "the average time an order takes to ship."
+- The generator assigns each scan's time as a random base time plus a
+  fixed +15 minutes per handling stage (RECEIVE=+0 ... DISPATCH=+75min).
+  If this proxy lands close to 75 minutes at every warehouse regardless of
+  real differences between them, that confirms the number reflects this
+  data-generation mechanic rather than genuine warehouse performance --
+  worth checking before ever comparing warehouses on this number.
+- DEFECT L11 (~6.5% of scan events never emitted) reduces the data this
+  proxy is built on, on top of everything above.
+
+**Query.** `sql/kpis/warehouse_cycle_time_proxy.sql`
+
+---
+
+*More entries land here as service level, channel reclassification, order
+value comparability, and feed completeness get written up.*
