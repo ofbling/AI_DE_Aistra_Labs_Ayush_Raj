@@ -100,3 +100,60 @@ all already handled upstream in staging).
 *More entries land here as the remaining fact tables (cold chain, WMS
 cycle time) get their numbers confirmed, plus service level, channel
 reclassification, and feed completeness.*
+
+---
+
+## Cold Chain Integrity (Excursion Rate)
+
+**Definition.** Percentage of chilled-vehicle temperature readings above
+the target band (2-8 degrees Celsius) -- "excursion," per the feed
+contract's literal wording ("any reading above the band"). A below-band
+reading is tracked separately, not counted as an excursion by this
+definition (see fact_cold_chain_reading.sql).
+
+**Grain.** Reading level; aggregated here by warehouse x vendor x month.
+No trip/journey grain exists in the source data.
+
+**Filters / exclusions.** Readings with a null temp_value (sensor
+dropouts, DEFECT L8, ~0.6% of readings) are excluded from both numerator
+and denominator.
+
+**Source.** `marts.fact_cold_chain_reading`.
+
+**Owner.** Supply Chain Operations (Divya Raghavan's team).
+
+**This is the headline finding of the whole engagement.** Measured
+directly, not estimated:
+
+| | Naive (raw temp_value, no unit fix) | Normalized (temp_c) |
+|---|---|---|
+| Overall | 38.29% | **7.19%** |
+| COLDEYE only | 100.0% | 7.2% |
+| THERMLOG only | 7.2% | 7.2% |
+
+THERMLOG (already Celsius) shows an identical rate either way -- expected,
+and itself a sanity check that normalization isn't distorting anything.
+COLDEYE (Fahrenheit, DEFECT L6) shows literally 100% naive, because almost
+any Fahrenheit reading is numerically far above a Celsius threshold of 8,
+regardless of whether the truck is actually running cold and safe. Once
+correctly converted, COLDEYE's true rate lands at exactly THERMLOG's rate.
+
+**Conclusion for the business:** the true cold chain excursion rate is
+approximately **7%**, not "about a third." COLDEYE devices are exactly
+1/3 of the fleet by assignment, and 100% of them misread as excursions
+under naive, unit-blind math -- almost certainly the exact origin of the
+"~1/3" figure Divya described. This was a units bug in whatever prior
+analysis produced that number, not a cold chain operations problem.
+
+**Known limitations.**
+- "Excursion" excludes below-band (too cold) readings by the contract's
+  literal definition; `below_band` is tracked as a separate signal.
+- No carrier breakdown possible -- no linkage exists in any raw feed
+  (see dim_carrier.sql).
+- No trip/journey grain -- this is a reading-level rate, not "percent of
+  trips with an excursion." The source schema has no concept of a trip.
+- DEFECT L10 (GW-017 outage) and L18 (one excluded truncated file) both
+  reduce reading coverage; neither is corrected here -- see the
+  completeness report.
+
+**Query.** `sql/kpis/cold_chain_excursion_rate.sql`
