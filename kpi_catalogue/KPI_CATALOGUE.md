@@ -205,9 +205,44 @@ precise regardless).
 - DEFECT L11 (~6.5% of scan events never emitted) reduces the data this
   proxy is built on, on top of everything above.
 
-**Query.** `sql/kpis/warehouse_cycle_time_proxy.sql`
+**Query.** `sql/kpis/warehouse_cycle_time_proxy.sql`x
 
 ---
 
-*More entries land here as service level, channel reclassification, order
-value comparability, and feed completeness get written up.*
+## Channel Reclassification History
+
+**Definition.** Every instance where an outlet's channel (GT/MT/HORECA/ECOM)
+changed from one value to a different value, with the date it happened and
+what it changed from/to. Directly answers illustrative question 6.
+
+**Grain.** One row per reclassification event (not per outlet, not per
+day -- an outlet that changed channel three times produces three rows).
+
+**Filters / exclusions.** An outlet's very first recorded version is never
+counted as a reclassification -- there's no "before" state to compare
+against, it's an initial assignment.
+
+**Source.** `clean.dim_outlet` -- this metric only exists because that
+table was built as full SCD2 history (see `dim_outlet.sql`), not a
+current-state lookup. A simpler "latest wins" outlet table could not
+answer this question at all.
+
+**Owner.** Commercial / Sales Operations (channel strategy).
+
+**Known limitations.**
+- This tracks the ERP master's channel (what `dim_outlet` represents), not
+  the till's channel (`channel_pos`, visible in `fact_sales`) -- the two
+  can disagree at the point of an actual sale; this KPI is about the
+  authoritative record, not point-of-sale capture.
+- Correctness note for anyone editing this query: the date-range filter
+  must be applied AFTER the `LAG()` comparison runs over full history, not
+  folded into the same `WHERE` clause -- see the SQL comment for why
+  getting this wrong silently corrupts results at the boundary of
+  whatever range is requested.
+
+**Query.** `sql/kpis/channel_reclassification_history.sql`
+
+---
+
+*More entries land here as service level, order value comparability, and
+feed completeness get written up.*
