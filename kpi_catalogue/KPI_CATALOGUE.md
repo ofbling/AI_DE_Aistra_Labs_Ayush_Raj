@@ -285,5 +285,41 @@ out). This is not real order-size variation; it's the defect.
 
 ---
 
-*More entries land here as service level and feed completeness get
-written up.*
+## Service Level
+
+**Definition attempted.** Divya asked for "service level" to be properly
+defined but did not specify a definition. The literal, textbook version --
+percentage of orders reaching DELIVERED status on or before their
+requested_delivery_date -- was implemented first.
+
+**Finding: this cannot be measured from the data as shipped.**
+`DELIVERED` never occurs anywhere in this dataset. Traced to the
+generator: order status is driven by `nu = rng.integers(1, 4, n)`, which
+in numpy only ever produces 1, 2, or 3 -- never enough to advance the
+status index far enough to reach `DELIVERED`. `DISPATCHED` is the highest
+status any order in this dataset ever reaches, for any order, at any
+point in its lifecycle.
+
+**Grain.** N/A -- the metric returns 0.0% unconditionally regardless of
+grain, date range, or any real operational change.
+
+**Source.** `clean.orders_current`.
+
+**Owner.** Supply Chain Operations (Divya Raghavan's team) -- and worth
+raising with whoever owns the order-status field in the source ERP, since
+a status value that's defined but never populated is itself worth their
+attention, independent of this pipeline.
+
+**Known limitations.**
+- Reported as measured, not adjusted. A `DISPATCHED`-based proxy
+  definition was considered and deliberately not substituted here --
+  that would be answering a different question than the one asked, and
+  presenting it as "service level" without saying so would misrepresent
+  what was actually measured. If leadership wants a workable proxy metric
+  instead, that's a follow-up decision for them to make explicitly.
+
+**Query.** `sql/kpis/service_level.sql`
+
+---
+
+*More entries land here as feed completeness gets written up.*
