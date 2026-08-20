@@ -97,12 +97,6 @@ all already handled upstream in staging).
 
 ---
 
-*More entries land here as the remaining fact tables (cold chain, WMS
-cycle time) get their numbers confirmed, plus service level, channel
-reclassification, and feed completeness.*
-
----
-
 ## Cold Chain Integrity (Excursion Rate)
 
 **Definition.** Percentage of chilled-vehicle temperature readings above
@@ -157,3 +151,9 @@ analysis produced that number, not a cold chain operations problem.
   completeness report.
 
 **Query.** `sql/kpis/cold_chain_excursion_rate.sql`
+
+---
+
+*More entries land here as the remaining fact tables (WMS cycle time) get
+confirmed, plus service level, channel reclassification, order value
+comparability, and feed completeness.*
