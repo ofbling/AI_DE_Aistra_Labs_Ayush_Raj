@@ -194,12 +194,14 @@ precise regardless).
 **Known limitations.**
 - Not a per-job metric. Treat any number this query returns as a coarse
   operational signal, never as "the average time an order takes to ship."
-- The generator assigns each scan's time as a random base time plus a
-  fixed +15 minutes per handling stage (RECEIVE=+0 ... DISPATCH=+75min).
-  If this proxy lands close to 75 minutes at every warehouse regardless of
-  real differences between them, that confirms the number reflects this
-  data-generation mechanic rather than genuine warehouse performance --
-  worth checking before ever comparing warehouses on this number.
+- CONFIRMED, not just predicted: this proxy lands between 71.1 and 81.4
+  minutes at all 8 warehouses (average ~76.3 minutes), tightly clustered
+  around the 75-minute value implied by the generator's fixed +15
+  minutes-per-stage time offset (RECEIVE=+0 ... DISPATCH=+75min). The
+  warehouse-to-warehouse spread here is sampling noise, not a real
+  operational difference -- this proxy reflects how the data was
+  generated, not genuine warehouse performance. Do not rank or compare
+  warehouses on this number.
 - DEFECT L11 (~6.5% of scan events never emitted) reduces the data this
   proxy is built on, on top of everything above.
 
