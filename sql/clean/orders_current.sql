@@ -33,6 +33,10 @@
 -- to stay primary. The right ordering key depends on how each table's CDC
 -- stream was actually built, not one rule applied everywhere.
 --
+-- order_date and requested_delivery_date are cast to DATE here -- the raw
+-- feed stores them as plain ISO strings, not a real date type. Casting
+-- once here instead of requiring every downstream query to remember to.
+--
 -- L15  tombstones now actually take effect -- see above.
 --
 -- L14  PARTNER_API inflates order_value_gross by 8.5% (double-counted
@@ -80,8 +84,8 @@ SELECT
     outlet_code,
     warehouse_code,
     route_code,
-    order_date,
-    requested_delivery_date,
+    order_date::DATE AS order_date,
+    requested_delivery_date::DATE AS requested_delivery_date,
     order_status,
     line_count,
     order_value_gross,
