@@ -244,5 +244,46 @@ answer this question at all.
 
 ---
 
-*More entries land here as service level, order value comparability, and
-feed completeness get written up.*
+## Order Value by Source System
+
+**Definition.** Total and average order value (`order_value_gross`),
+broken down by which system the order originated from (`SFA_MOBILE`,
+`ERP_WEB`, `PARTNER_API`). Directly answers illustrative question 7.
+
+**Grain.** Source system (aggregated across the requested date range).
+
+**Filters / exclusions.** Uses current-state order value per
+`orders_current` -- tombstoned (deleted) orders are excluded (DEFECT L15).
+
+**Source.** `clean.orders_current`.
+
+**Owner.** Finance.
+
+**Are the three sources comparable? No.** Confirmed directly:
+
+| Source | Orders | Avg order value (INR) |
+|---|---|---|
+| SFA_MOBILE | 190,371 | 240,653 |
+| ERP_WEB | 94,942 | 241,384 |
+| PARTNER_API | 31,807 | **262,143** |
+
+`SFA_MOBILE` and `ERP_WEB` agree closely (within 0.3% of each other).
+`PARTNER_API` runs about 8.8% higher -- consistent with the known ~8.5%
+freight double-count (DEFECT L14, an open Finance ticket never closed
+out). This is not real order-size variation; it's the defect.
+
+**Known limitations.**
+- `PARTNER_API` values are reported as-is, not adjusted -- see
+  `orders_current.sql` for why silently correcting a Finance-owned number
+  isn't this pipeline's call to make. `partner_api_freight_flag` in
+  `orders_current` makes affected orders queryable if exclusion is wanted.
+- `source_system` can, in principle, differ across an order's own update
+  history in this data (see `orders_current.sql`) -- this reports whatever
+  the latest known record says, same as every other column there.
+
+**Query.** `sql/kpis/order_value_by_source_system.sql`
+
+---
+
+*More entries land here as service level and feed completeness get
+written up.*
