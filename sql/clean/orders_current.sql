@@ -6,12 +6,34 @@
 -- data/raw/erp_cdc/sales_order_header/ if that changes later. Don't build
 -- ahead of an actual need.
 --
--- L15  ~0.9% of orders are hard-deleted well after insert (tombstone
---      arrives late, __seq pushed +10,000,000 so it always sorts last).
---      Ordering by (op_ts, seq) DESC and taking the top row per order
---      handles this the same way dim_outlet/dim_product handle deletes:
---      if the latest record for a key is a 'D', that order is excluded
---      from this table entirely.
+-- ORDERING: seq DESC alone, NOT (op_ts, seq) the way dim_outlet/dim_product
+-- use it. Found empirically -- Order Value by Source System came back with
+-- exactly 320,000 orders (the full universe) instead of the ~317,120
+-- expected after ~0.9% tombstoning (L15). Root cause, traced in the
+-- generator: sales_order_header's delete rows are cloned directly from
+-- their original INSERT row and only __op, __seq, and extract_date get
+-- overwritten -- __op_ts is left untouched, stuck at the original insert
+-- time. Every order with at least one update (nearly all of them) then
+-- has update records with a genuinely LATER __op_ts than their own stale
+-- delete, so ordering by op_ts first always picks the update, never the
+-- delete, and the tombstone silently never took effect.
+--
+-- __seq does not have this problem: the delete's seq is always
+-- original_insert_seq + 10,000,000, guaranteed higher than any real
+-- record for that order (ordinary seq tops out around a million), and for
+-- every NON-delete record in this table __seq increases in exact lockstep
+-- with __op_ts anyway (each order's updates are generated with step and
+-- day moving together), so sorting by seq alone gives an identical result
+-- to (op_ts, seq) for every row except the one case that needed fixing.
+--
+-- This is NOT a blanket "trust seq over op_ts" rule -- the opposite holds
+-- for dim_outlet/dim_product, where update seq is assigned by a simple
+-- incrementing loop independent of each update's randomly-drawn day, so
+-- seq order there does NOT track true chronological order and op_ts has
+-- to stay primary. The right ordering key depends on how each table's CDC
+-- stream was actually built, not one rule applied everywhere.
+--
+-- L15  tombstones now actually take effect -- see above.
 --
 -- L14  PARTNER_API inflates order_value_gross by 8.5% (double-counted
 --      freight, per the open Finance ticket in the feed contract that was
@@ -50,7 +72,7 @@ WITH raw AS (
 ),
 latest AS (
     SELECT *,
-        ROW_NUMBER() OVER (PARTITION BY order_number ORDER BY op_ts DESC, seq DESC) AS rn
+        ROW_NUMBER() OVER (PARTITION BY order_number ORDER BY seq DESC) AS rn
     FROM raw
 )
 SELECT
