@@ -322,4 +322,49 @@ attention, independent of this pipeline.
 
 ---
 
+## Feed Completeness
+
+**Definition.** Which partitions, in any feed, are missing or don't match
+what the ingestion job itself recorded -- directly answers illustrative
+question 8: "which days are missing data, and how would we know without
+being told."
+
+**Grain.** Partition level for the 3 manifested feeds; gateway-day level
+for the reefer_telemetry gap check; partition-presence only for the 3
+erp_cdc feeds, which have no manifest to check against at all.
+
+**Source.** All 6 raw feeds directly, plus `_manifest/expected_partitions.csv`.
+
+**Owner.** Data Engineering / whoever owns the ingestion job.
+
+**What it checks, and why one check isn't enough:**
+1. Per-partition row counts vs the manifest -- catches a partition that's
+   present and counted in the manifest but is actually broken (DEFECT L18:
+   one reefer_telemetry file is truncated to 72% of its bytes after the
+   manifest was written; the manifest still claims the original count).
+2. Gateway-level day gaps within reefer_telemetry, found generically --
+   for every gateway, is there a day inside its normal active range with
+   zero readings? Not hardcoded to any specific gateway or date -- this is
+   what actually surfaces DEFECT L10 (the GW-017 outage) without already
+   knowing to look for it.
+3. Partition presence for the three `erp_cdc/*` feeds, which have **no
+   manifest at all** -- `expected_partitions.csv` only ever covers
+   `pos_transactions`, `reefer_telemetry`, and `wms_scan_events`. Nothing
+   in this dataset checks ERP completeness at the ingestion-job level;
+   this is the closest thing that exists.
+
+**Known limitations.**
+- The erp_cdc check can only confirm a partition folder exists, not that
+  its row count is right -- there's no baseline to compare against.
+- Row-count matching (check 1) can't catch a partition missing entirely
+  with zero rows recorded anywhere, including the manifest -- if the
+  ingestion job itself never ran and never wrote a manifest row, this
+  check has nothing to compare against either. It only catches drift
+  between what the manifest says and what's actually on disk.
+
+**Query.** `scripts/feed_completeness_report.py`
+
+---
+
+
 *More entries land here as feed completeness gets written up.*

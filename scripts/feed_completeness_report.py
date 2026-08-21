@@ -40,9 +40,12 @@ def per_partition_reconciliation(con):
             expected_row = manifest[(manifest.feed == feed) & (manifest.partition == part_dir.name)]
             expected = int(expected_row.row_count.iloc[0]) if len(expected_row) else None
             try:
-                actual = con.sql(
-                    f"SELECT count(*) FROM read_parquet('{part_dir.as_posix()}/*.parquet', union_by_name=true)"
-                ).fetchone()[0]
+                # own connection here -- a bad partition shouldn't poison
+                # the shared one the checks after this one still need
+                with duckdb.connect() as probe:
+                    actual = probe.sql(
+                        f"SELECT count(*) FROM read_parquet('{part_dir.as_posix()}/*.parquet', union_by_name=true)"
+                    ).fetchone()[0]
             except Exception as e:
                 mismatches.append((part_dir.name, expected, "UNREADABLE", str(e)[:80]))
                 continue
