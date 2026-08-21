@@ -1,33 +1,39 @@
 """
-ask-anything layer over the marts/kpi layer. the cfo's one hard rule: if
-it can't show the sql it ran, it doesn't count -- so every answer here
-prints the query BEFORE the result, always, not just when claude mentions it.
+ask-anything layer over the marts/kpi layer, running fully local via ollama
+-- no api key, no billing, nothing leaves this machine.
 
-needs anthropic credentials available (ANTHROPIC_API_KEY, or `ant auth login`).
+setup:
+    1. install ollama: https://ollama.com
+    2. ollama pull llama3.1:8b
+    3. ollama serve   (usually already running as a background service)
 
     python ask/ask_anything.py
     > what were gross sales by channel last month?
 """
+import json
 import duckdb
-import anthropic
+from openai import OpenAI
 
 DB_PATH = "warehouse.duckdb"
-MODEL = "claude-opus-5"
+MODEL = "llama3.1:8b"
+
+client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")  # key unused, ollama doesn't check it
 
 RUN_SQL_TOOL = {
-    "name": "run_sql_query",
-    "description": (
-        "Run a read-only SQL query against the DuckDB warehouse to answer "
-        "the user's question. Only query marts.* or clean.* tables."
-    ),
-    "strict": True,
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "sql": {"type": "string", "description": "The DuckDB SQL query to run."},
+    "type": "function",
+    "function": {
+        "name": "run_sql_query",
+        "description": (
+            "Run a read-only SQL query against the DuckDB warehouse to "
+            "answer the user's question. Only query marts.* or clean.* tables."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sql": {"type": "string", "description": "The DuckDB SQL query to run."},
+            },
+            "required": ["sql"],
         },
-        "required": ["sql"],
-        "additionalProperties": False,
     },
 }
 
@@ -63,6 +69,9 @@ chain, and warehouse data by running SQL against a DuckDB warehouse.
 Rules:
 - Always use the run_sql_query tool to answer any question about the
   data. Never answer from assumption or memory.
+- Use table and column names EXACTLY as listed below -- do not guess or
+  invent generic-sounding names (e.g. date_key, order_value_gross on
+  fact_sales). If you're not sure a column exists, check the list again.
 - Only query tables in the marts or clean schemas below. Never query
   staging or read raw files directly -- those aren't cleaned or joined.
 - Prefer reusing the exact logic already defined in the KPI catalogue
@@ -88,47 +97,52 @@ def run_query(con, sql: str):
         return str(e), True
 
 
-def ask(client, con, system_prompt: str, question: str):
-    messages = [{"role": "user", "content": question}]
+MAX_TOOL_ROUNDS = 3
 
-    while True:
-        response = client.messages.create(
+
+def ask(con, system_prompt: str, question: str):
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": question},
+    ]
+
+    for _ in range(MAX_TOOL_ROUNDS):
+        print("...thinking (local model, can take a minute or two)...")
+        response = client.chat.completions.create(
             model=MODEL,
-            max_tokens=16000,
-            system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
-            tools=[RUN_SQL_TOOL],
             messages=messages,
+            tools=[RUN_SQL_TOOL],
+            temperature=0,
         )
+        message = response.choices[0].message
 
-        tool_calls = [b for b in response.content if b.type == "tool_use"]
-        if not tool_calls:
-            text = next((b.text for b in response.content if b.type == "text"), "")
-            print(f"\n{text}\n")
+        if not message.tool_calls:
+            print(f"\n{message.content}\n")
             return
 
-        messages.append({"role": "assistant", "content": response.content})
+        messages.append(message.model_dump())
 
-        tool_results = []
-        for call in tool_calls:
-            sql = call.input["sql"]
+        for call in message.tool_calls:
+            sql = json.loads(call.function.arguments)["sql"]
             print(f"\n--- SQL ---\n{sql}\n")
             output, is_error = run_query(con, sql)
             print(f"--- result ---\n{output}\n")
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": call.id,
+            messages.append({
+                "role": "tool",
+                "tool_call_id": call.id,
                 "content": output,
-                "is_error": is_error,
             })
-        messages.append({"role": "user", "content": tool_results})
+
+    print(f"\ngave up after {MAX_TOOL_ROUNDS} attempts -- the model kept "
+          f"generating SQL that didn't match the real schema. try a more "
+          f"specific question, or see the errors above.\n")
 
 
 def main():
     con = duckdb.connect(DB_PATH, read_only=True)
-    client = anthropic.Anthropic()
     system_prompt = build_system_prompt(get_schema(con), get_kpi_catalogue())
 
-    print("ask-anything -- type a question, or 'exit' to quit.")
+    print("ask-anything (local, via ollama) -- type a question, or 'exit' to quit.")
     while True:
         question = input("\n> ").strip()
         if question.lower() in ("exit", "quit"):
@@ -136,11 +150,9 @@ def main():
         if not question:
             continue
         try:
-            ask(client, con, system_prompt, question)
-        except anthropic.AuthenticationError:
-            print("no anthropic credentials found -- set ANTHROPIC_API_KEY "
-                  "or run `ant auth login`.")
-            break
+            ask(con, system_prompt, question)
+        except Exception as e:
+            print(f"error talking to ollama -- is `ollama serve` running? ({e})")
 
 
 if __name__ == "__main__":
