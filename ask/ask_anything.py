@@ -4,7 +4,7 @@ ask-anything layer over the marts/kpi layer, running fully local via ollama
 
 setup:
     1. install ollama: https://ollama.com
-    2. ollama pull llama3.1:8b
+    2. ollama pull qwen2.5-coder:7b
     3. ollama serve   (usually already running as a background service)
 
     python ask/ask_anything.py
@@ -12,10 +12,11 @@ setup:
 """
 import json
 import duckdb
+import re
 from openai import OpenAI
 
 DB_PATH = "warehouse.duckdb"
-MODEL = "llama3.1:8b"
+MODEL = "qwen2.5-coder:7b"
 
 client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")  # key unused, ollama doesn't check it
 
