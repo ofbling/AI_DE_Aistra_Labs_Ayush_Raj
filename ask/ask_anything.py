@@ -73,6 +73,9 @@ Rules:
 - Use table and column names EXACTLY as listed below -- do not guess or
   invent generic-sounding names (e.g. date_key, order_value_gross on
   fact_sales). If you're not sure a column exists, check the list again.
+- Once a tool result already answers the question, respond in plain text
+  with the answer -- do not call the tool again just to double-check a
+  result that's already correct.
 - Only query tables in the marts or clean schemas below. Never query
   staging or read raw files directly -- those aren't cleaned or joined.
 - Prefer reusing the exact logic already defined in the KPI catalogue
@@ -101,11 +104,44 @@ def run_query(con, sql: str):
 MAX_TOOL_ROUNDS = 3
 
 
+def try_parse_text_tool_call(content: str):
+    if not content:
+        return None
+    text = content.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.startswith("json"):
+            text = text[4:]
+        text = text.strip()
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        return None
+    try:
+        obj = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    if obj.get("name") != "run_sql_query":
+        return None
+    args = obj.get("arguments", {})
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except json.JSONDecodeError:
+            return None
+    return args.get("sql")
+
+
+def normalize_result(csv_text: str) -> frozenset:
+    lines = csv_text.strip().splitlines()
+    return frozenset(lines[1:])  # drop header, row order doesn't matter
+
+
 def ask(con, system_prompt: str, question: str):
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": question},
     ]
+    last_result = None
 
     for _ in range(MAX_TOOL_ROUNDS):
         print("...thinking (local model, can take a minute or two)...")
@@ -117,26 +153,40 @@ def ask(con, system_prompt: str, question: str):
         )
         message = response.choices[0].message
 
-        if not message.tool_calls:
+        if message.tool_calls:
+            sql = json.loads(message.tool_calls[0].function.arguments)["sql"]
+        else:
+            sql = try_parse_text_tool_call(message.content)
+
+        if sql is None:
             print(f"\n{message.content}\n")
             return
 
-        messages.append(message.model_dump())
+        print(f"\n--- SQL ---\n{sql}\n")
+        output, is_error = run_query(con, sql)
+        print(f"--- result ---\n{output}\n")
 
-        for call in message.tool_calls:
-            sql = json.loads(call.function.arguments)["sql"]
-            print(f"\n--- SQL ---\n{sql}\n")
-            output, is_error = run_query(con, sql)
-            print(f"--- result ---\n{output}\n")
+        if not is_error:
+            normalized = normalize_result(output)
+            if normalized == last_result:
+                print("(same result as the last query -- taking this as the answer)\n")
+                return
+            last_result = normalized
+
+        if message.tool_calls:
+            messages.append(message.model_dump())
             messages.append({
                 "role": "tool",
-                "tool_call_id": call.id,
+                "tool_call_id": message.tool_calls[0].id,
                 "content": output,
             })
+        else:
+            messages.append({"role": "assistant", "content": message.content})
+            messages.append({"role": "user", "content": f"Query result:\n{output}"})
 
-    print(f"\ngave up after {MAX_TOOL_ROUNDS} attempts -- the model kept "
-          f"generating SQL that didn't match the real schema. try a more "
-          f"specific question, or see the errors above.\n")
+    print(f"\ngave up after {MAX_TOOL_ROUNDS} attempts without a final answer "
+          f"-- check the queries and results above, one of them may already "
+          f"be correct.\n")
 
 
 def main():
