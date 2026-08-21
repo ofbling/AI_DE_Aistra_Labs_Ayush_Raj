@@ -1,18 +1,5 @@
-"""
-Phase 4 -- marts layer.
-
-Loads reference dimensions (dim_date, dim_warehouse, dim_carrier) and the
-fact tables. Reads from staging.*/clean.* and data/reference/ only -- never
-from data/raw/ directly, except for the reference CSVs which have no
-staged/cleaned equivalent.
-
-Run after staging and clean:
-    python pipeline/run_staging.py
-    python pipeline/run_clean.py
-    python pipeline/run_marts.py
-"""
+"""builds marts.* -- dims + facts. run after run_staging.py and run_clean.py."""
 from pathlib import Path
-
 import duckdb
 
 DB_PATH = "warehouse.duckdb"
@@ -26,7 +13,7 @@ SQL_FILES = [
 ]
 
 
-def main() -> None:
+def main():
     con = duckdb.connect(DB_PATH)
 
     for path in SQL_FILES:
@@ -40,12 +27,8 @@ def main() -> None:
         n = con.sql(f"SELECT count(*) FROM {table}").fetchone()[0]
         print(f"{table}: {n:,} rows")
 
-    print(
-        "\nNOTE: dim_carrier has no fact table joining to it yet, and none of "
-        "the raw feeds carry a carrier_id or a route_code -> carrier mapping. "
-        "Illustrative question 4 ('by carrier') cannot be answered from this "
-        "dataset as given -- see DECISIONS.md."
-    )
+    # no fact table joins to dim_carrier -- no carrier_id anywhere in the raw feeds
+    print("\nNOTE: dim_carrier has nothing to join to -- see DECISIONS.md")
 
     orphans = con.sql("""
         SELECT
@@ -54,9 +37,11 @@ def main() -> None:
             count(*) AS total_rows
         FROM marts.fact_sales
     """).df()
-    print("\nfact_sales referential integrity check (point-in-time joins):")
+    print("\nfact_sales join check:")
     print(orphans.to_string(index=False))
 
+    # breaks misses down: never existed, deleted for good, or stuck in a gap
+    # between two versions -- see fact_sales.sql for the gap explanation
     outlet_breakdown = con.sql("""
         WITH misses AS (
             SELECT p.outlet_code, p.event_ts_utc
@@ -85,7 +70,7 @@ def main() -> None:
         FROM misses m
         LEFT JOIN bounds b ON m.outlet_code = b.outlet_code
     """).df()
-    print("\noutlet_join_misses breakdown (why each one is unmatched):")
+    print("\noutlet miss breakdown:")
     print(outlet_breakdown.to_string(index=False))
 
     product_breakdown = con.sql("""
@@ -116,18 +101,18 @@ def main() -> None:
         FROM misses m
         LEFT JOIN bounds b ON m.sku_code = b.sku_code
     """).df()
-    print("\nproduct_join_misses breakdown (why each one is unmatched):")
+    print("\nproduct miss breakdown:")
     print(product_breakdown.to_string(index=False))
 
+    # confirms it's safe to use dim_product.case_pack instead of
+    # uom_conversion.csv (missing ~4% of skus on purpose)
     mismatch = con.sql("""
         SELECT count(*) AS disagreements
         FROM read_csv_auto('data/reference/uom_conversion.csv') u
         JOIN clean.dim_product p ON u.sku_code = p.sku_code AND p.is_current
         WHERE u.eaches_per_case != p.case_pack
     """).fetchone()[0]
-    print(f"\nuom_conversion.csv vs dim_product.case_pack disagreements: {mismatch:,} "
-          f"(0 confirms it's safe to source eaches-per-case from dim_product, "
-          f"which has no L16 gaps)")
+    print(f"\nuom_conversion vs dim_product.case_pack disagreements: {mismatch:,}")
 
     wh_orphans = con.sql("""
         SELECT count(*) FILTER (WHERE warehouse_name IS NULL) AS warehouse_join_misses,
@@ -137,15 +122,17 @@ def main() -> None:
     print("\nfact_cold_chain_reading warehouse join check:")
     print(wh_orphans.to_string(index=False))
 
+    # naive = ignore vendor units, normalized = temp_c -- this is the check
+    # behind divya's "impossible 1/3 excursion rate" comment
     excursion_compare = con.sql("""
         SELECT
             round(100.0 * count(*) FILTER (WHERE temp_value > 8 AND temp_value IS NOT NULL)
-                  / count(*) FILTER (WHERE temp_value IS NOT NULL), 2) AS naive_pct_using_raw_temp_value,
+                  / count(*) FILTER (WHERE temp_value IS NOT NULL), 2) AS naive_pct,
             round(100.0 * count(*) FILTER (WHERE above_band)
-                  / count(*) FILTER (WHERE temp_c IS NOT NULL), 2) AS normalized_pct_using_temp_c
+                  / count(*) FILTER (WHERE temp_c IS NOT NULL), 2) AS normalized_pct
         FROM marts.fact_cold_chain_reading
     """).df()
-    print("\nExcursion rate: naive (raw temp_value, no unit fix) vs normalized (temp_c):")
+    print("\nExcursion rate, naive vs normalized:")
     print(excursion_compare.to_string(index=False))
 
     by_vendor = con.sql("""
@@ -158,7 +145,7 @@ def main() -> None:
         GROUP BY telemetry_vendor
         ORDER BY telemetry_vendor
     """).df()
-    print("\nBy vendor -- this is where Divya's 'impossible 1/3' number likely came from:")
+    print("\nsame thing by vendor:")
     print(by_vendor.to_string(index=False))
 
     wms_orphans = con.sql("""
@@ -169,6 +156,8 @@ def main() -> None:
     print("\nfact_wms_scan_event warehouse join check:")
     print(wms_orphans.to_string(index=False))
 
+    # how often a dispatch happens to share a pallet_id with an earlier
+    # receive at the same warehouse -- should be ~coincidence rate, not real
     linkage_check = con.sql("""
         SELECT
             count(*) AS dispatch_events,
@@ -180,18 +169,12 @@ def main() -> None:
                       AND r.pallet_id = d.pallet_id
                       AND r.event_ts_ist < d.event_ts_ist
                 )
-            ) AS dispatch_with_a_prior_same_pallet_receive
+            ) AS dispatch_with_prior_same_pallet_receive
         FROM marts.fact_wms_scan_event d
         WHERE d.event_type = 'DISPATCH'
     """).df()
-    print("\nDISPATCH-to-RECEIVE pallet_id 'linkage' check (expect ~coincidence rate, not a real link):")
+    print("\npallet_id coincidence check:")
     print(linkage_check.to_string(index=False))
-    print(
-        "Back-of-envelope expected coincidence rate, given pallet_id has "
-        "400,000 possible values and roughly ~31k RECEIVE scans per "
-        "warehouse: ~7-8%. A rate in that range confirms these are random "
-        "matches, not a genuine stitching key."
-    )
 
 
 if __name__ == "__main__":
