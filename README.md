@@ -16,8 +16,8 @@ calls and trade-offs, meant to be read before any of the code below.
 ## Setup
 
 ```
-git clone <your-repo-url>
-cd <repo-folder>
+git clone https://github.com/ofbling/AI_DE_Aistra_Labs_Ayush_Raj.git
+cd AI_DE_Aistra_Labs_Ayush_Raj
 
 python -m venv .venv
 .venv\Scripts\Activate.ps1        # Windows PowerShell
